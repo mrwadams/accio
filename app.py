@@ -17,6 +17,9 @@ from app.utils.llm_service import LLMService
 # Load environment variables
 load_dotenv()
 
+# Always initialize the database (safe to run multiple times)
+initialize_database()
+
 # Initialize session state
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
@@ -65,9 +68,6 @@ if st.session_state.authenticated and 'initialized' not in st.session_state:
         # Initialize services
         st.session_state.llm_service = LLMService(client)
         st.session_state.embedding_service = EmbeddingService(client)
-        
-        # Initialize database if needed
-        initialize_database()
         
         st.session_state.initialized = True
     except Exception as e:
