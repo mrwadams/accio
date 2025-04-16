@@ -1,11 +1,11 @@
-### **LLM RAG Chatbot Specification v2.4**
+### **LLM RAG Chatbot Specification v2.7**
 
 **1. Objective:**
    To create an LLM-powered chatbot utilizing a Retrieval-Augmented Generation (RAG) architecture to answer questions based on team-specific knowledge bases, deployed internally on OpenShift.
 
 **2. Core Components:**
    * **Frontend:** Streamlit application.
-   * **Backend/Orchestration:** Python application logic using the `google.genai` library (imported via `from google import genai`). Requires initializing a client: `client = genai.Client(api_key=...)`.
+   * **Backend/Orchestration:** Python application logic using the `google.genai` library (imported via `from google import genai`) and `langchain` for document processing. Requires initializing a client: `client = genai.Client(api_key=...)`.
    * **LLM:** Google Gemini model `gemini-2.0-flash` accessed via the client.
    * **Embedding Model:** Google embedding model `text-embedding-004` accessed via the client.
    * **Vector Database:** PostgreSQL with `pgvector` extension.
@@ -13,13 +13,23 @@
 
 **3. Data Management & Configuration:**
    * **Supported Sources:** PDF, Microsoft Word (.docx), CSV.
+   * **Document Processing:** Utilize Langchain document loaders for robust text extraction from various formats.
    * **Ingestion Workflow:** Manual via Admin Panel initially, potential S3 automation later.
-   * **Preprocessing:** Text extraction, guidance for clean data, error handling flagged in Admin UI.
-   * **Chunking:** Multiple strategies, configurable, offline benchmarking planned.
-   * **Metadata & Storage:** Store Unique Document ID, Filename, Source Metadata (page/row range), Text Chunk, and Vector Embedding per chunk in PostgreSQL.
+   * **Preprocessing:** Text extraction via Langchain, guidance for clean data, error handling flagged in Admin UI.
+   * **Chunking:** Utilize Langchain text splitters with multiple strategies, configurable, offline benchmarking planned.
+   * **Data Model:**
+      * Teams table: team_id (PK), access_code, team_name, configuration (JSONB)
+      * Documents table: doc_id (PK), team_id (FK), filename, metadata (JSONB), status
+      * Chunks table: chunk_id (PK), doc_id (FK), text, embedding (vector)
+   * **Document Management:**
+      * List all documents with metadata (filename, team, chunks, status)
+      * View document details including processing history
+      * Filter/search documents by team or metadata
+      * Bulk operations (delete)
+      * Note: To update document processing settings, delete existing document and re-upload with new settings
    * **Vectorization:** Use `text-embedding-004` via the `genai` client.
-   * **Document Deletion/Updates:** Admin panel mechanism using Unique Document ID.
-   * **Configuration Management:** Implement a flexible system allowing key parameters (e.g., prompts, model settings like temperature, retrieval settings like K value, hybrid search weights) to be configured **per schema**. This allows tuning based on specific team needs and benchmark outcomes. Configuration could be stored in the database or managed via configuration files linked to schemas.
+   * **Document Deletion:** Admin panel mechanism using Document ID.
+   * **Configuration Management:** Store team-specific configurations (prompts, model settings, retrieval settings) in the teams table as JSONB. This allows tuning based on specific team needs and benchmark outcomes.
 
 **4. RAG Pipeline & LLM Interaction:**
    * **Retrieval Strategy:** Hybrid Search (Vector + Keyword [PG FTS recommended]), RRF score fusion. Parameters tunable per schema.
@@ -42,10 +52,20 @@
    * **Admin Panel:** Separate section/auth, schema management, upload, deletion, error flags, interface for managing per-schema configurations.
 
 **6. Access Control & Security:**
-   * **User Authentication:** Shared key per app version/schema.
-   * **Admin Authentication:** Separate key/mechanism.
-   * **Authorization:** Operations restricted to user's schema.
-   * **Schema Isolation:** In PostgreSQL.
+   * **Authentication:** 
+      * All authentication is handled via access codes stored in environment variables.
+      * Teams authenticate using their team-specific access code.
+      * Admin authentication uses a separate admin access code.
+      * No per-user management or user management UI in the current design.
+   * **Authorization:**
+      * Team access is restricted to documents tagged with their team_id.
+      * All database queries automatically filter by team_id after authentication.
+      * Admins have access to all documents and configuration settings.
+   * **Data Isolation:**
+      * Single application schema containing all tables.
+      * Team isolation achieved through application-level filtering.
+      * All queries include team_id filters to ensure data separation.
+      * Database indexes on team_id columns to optimize filtered queries.
 
 **7. Deployment, Operations & Documentation:**
    * **Infrastructure:** Streamlit on OpenShift, PostgreSQL on VM.

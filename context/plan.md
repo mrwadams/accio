@@ -1,19 +1,22 @@
-### **RAG Chatbot Implementation Plan v1.4**
+### **RAG Chatbot Implementation Plan v1.7**
 
-This plan outlines the steps to implement the RAG chatbot based on `rag_chatbot_spec_v2.4`. *Emphasis added on modular design throughout backend phases.*
+This plan outlines the steps to implement the RAG chatbot based on `rag_chatbot_spec_v2.6`. *Emphasis added on modular design throughout backend phases.*
 
 **Phase 0: Setup & Foundation**
 
-1.  **Environment Setup:** Install dependencies, import `genai`, `types`.
+1.  **Environment Setup:** Install dependencies, import `genai`, `types`, `langchain`.
 2.  **Client Initialization:** `client = genai.Client(...)`.
-3.  **Database Setup:** PostgreSQL, `pgvector`, initial schema (consider table for configurations).
+3.  **Database Setup:**
+     * Create application schema and enable pgvector
+     * Create teams, documents, and chunks tables with appropriate indexes
+     * Add team_id foreign key constraints and indexes
 4.  **Basic Streamlit App:** Minimal structure.
 5.  **API Connection Test:** Test `client`, `generate_content` (`gemini-2.0-flash`), `embed_content` (`text-embedding-004`).
 
 **Phase 1: Core RAG Pipeline - MVP** *(Focus on modular functions)*
 
-1.  **Basic Document Loading:** Implement for one type (e.g., CSV) in a reusable function/class.
-2.  **Simple Chunking:** Implement basic strategy in a reusable function/class.
+1.  **Document Loading:** Implement using Langchain document loaders for various formats (CSV, PDF, DOCX).
+2.  **Text Splitting:** Implement using Langchain text splitters with configurable strategies.
 3.  **Embedding & Storage:** Generate embeddings (`text-embedding-004`), store in DB. Wrap DB interactions.
 4.  **Basic Vector Retrieval:** Implement `pgvector` search function.
 5.  **Simple Generation:** Construct prompt, call `generate_content` (`gemini-2.0-flash`). Wrap LLM call.
@@ -21,11 +24,17 @@ This plan outlines the steps to implement the RAG chatbot based on `rag_chatbot_
 
 **Phase 2: Enhancing Data Handling & Admin Panel** *(Focus on modularity)*
 
-1.  **Multi-Format Parsing:** Implement robust, reusable parsers for PDF, DOCX, CSV.
+1.  **Multi-Format Parsing:** Leverage Langchain document loaders for robust parsing of PDF, DOCX, CSV.
 2.  **Full Metadata Extraction:** Implement reusable metadata extraction logic.
 3.  **Admin Panel UI:** Build multi-page/section app. Include placeholders/basic UI for configuration management.
 4.  **Ingestion Logic:** Connect UI to modular backend ingestion pipeline (`embed_content`). Handle errors.
-5.  **Document Deletion:** Implement backend logic.
+5.  **Document Management:**
+    * Implement database queries to list/filter documents
+    * Add UI components for viewing document details
+    * Add document search/filter functionality
+    * Implement bulk operations interface
+6.  **Document Deletion:** Implement backend logic and UI integration.
+    * Note: Document updates/reprocessing should be handled by deleting and re-uploading with new settings.
 
 **Phase 3: Advanced RAG Features** *(Focus on modularity)*
 
@@ -42,12 +51,18 @@ This plan outlines the steps to implement the RAG chatbot based on `rag_chatbot_
 
 **Phase 5: Access Control, Configuration & Deployment**
 
-1.  **Schema Management (Admin):** Implement backend logic if needed.
-2.  **Authentication:** Implement user and Admin key checks.
-3.  **Configuration Management Implementation:**
-    * Design and implement storage (DB table or config files per schema).
-    * Integrate logic to load and use per-schema configurations (prompts, model params, retrieval settings) in relevant backend modules.
-    * Update Admin Panel UI to allow viewing/editing these configurations.
+1.  **Team Management (Admin):**
+     * Implement team CRUD operations
+     * Add team configuration management UI
+     * Create initial teams with access codes
+2.  **Authentication:**
+     * Implement shared login flow using access codes
+     * Add team context to session state
+     * Implement admin access flow
+3.  **Query Filtering:**
+     * Create query wrapper to automatically filter by team_id
+     * Implement admin override for full access
+     * Add team-specific configuration loading
 4.  **Containerization:** Create `Dockerfile`.
 5.  **Deployment:** Deploy to OpenShift, configure connections and environment variables.
 6.  **Logging Setup:** Configure application logging.
