@@ -8,9 +8,26 @@ from app.utils.database import store_document, get_team_documents, delete_docume
 from app.utils.embeddings import EmbeddingService, VectorStore
 from app.utils.ingestion import IngestionPipeline
 import pandas as pd
+import sys
+import nltk
 
 # Load environment variables
 load_dotenv()
+
+# Ensure NLTK uses bundled data in project root
+NLTK_DATA_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'nltk_data')
+if NLTK_DATA_PATH not in nltk.data.path:
+    nltk.data.path.insert(0, NLTK_DATA_PATH)
+
+# Ensure 'punkt' is available (download if missing)
+try:
+    nltk.data.find('tokenizers/punkt')
+except LookupError:
+    try:
+        nltk.download('punkt', download_dir=NLTK_DATA_PATH)
+    except Exception as e:
+        print(f"Error downloading NLTK 'punkt': {e}", file=sys.stderr)
+        raise
 
 def check_auth():
     """Check if user is authenticated"""
