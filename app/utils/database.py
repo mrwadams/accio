@@ -251,8 +251,8 @@ def initialize_database():
         connection.autocommit = True
         cursor = connection.cursor()
         
-        # Create the pgvector extension if it doesn't exist
-        cursor.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+        # Create the pgvector extension in app_schema if it doesn't exist
+        cursor.execute("CREATE EXTENSION IF NOT EXISTS vector SCHEMA app_schema;")
         
         # Create the app schema
         cursor.execute("CREATE SCHEMA IF NOT EXISTS app_schema;")
@@ -280,13 +280,13 @@ def initialize_database():
             );
         """)
         
-        # Create chunks table with vector support
+        # Create chunks table with vector support in app_schema
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS app_schema.chunks (
                 chunk_id TEXT PRIMARY KEY,
                 doc_id TEXT NOT NULL REFERENCES app_schema.documents(doc_id) ON DELETE CASCADE,
                 text TEXT NOT NULL,
-                embedding vector(768),
+                embedding app_schema.vector(768),
                 metadata JSONB DEFAULT '{}'::jsonb,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
@@ -296,7 +296,7 @@ def initialize_database():
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS chunks_embedding_idx 
             ON app_schema.chunks 
-            USING ivfflat (embedding vector_cosine_ops)
+            USING ivfflat (embedding app_schema.vector_cosine_ops)
             WITH (lists = 100);
         """)
         cursor.close()
