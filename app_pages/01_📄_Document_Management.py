@@ -10,6 +10,8 @@ from app.utils.ingestion import IngestionPipeline
 import pandas as pd
 import sys
 import nltk
+from app.utils.vertex_genai_client_test import VertexGenAIClient
+from app.utils.vertex_embedding_service import VertexEmbeddingService
 
 # Load environment variables
 load_dotenv()
@@ -38,9 +40,14 @@ def check_auth():
 
 def initialize_services():
     """Initialize required services."""
+    genai_client_type = os.getenv("GENAI_CLIENT_TYPE", "google").lower()
     if 'genai_client' not in st.session_state:
-        st.session_state.genai_client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
-        st.session_state.embedding_service = EmbeddingService(st.session_state.genai_client)
+        if genai_client_type == "vertex":
+            st.session_state.genai_client = VertexGenAIClient()
+            st.session_state.embedding_service = VertexEmbeddingService(st.session_state.genai_client)
+        else:
+            st.session_state.genai_client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+            st.session_state.embedding_service = EmbeddingService(st.session_state.genai_client)
     
     # Initialize vector store
     vector_store = VectorStore({
