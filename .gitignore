@@ -12,3 +12,5 @@ __pycache__/
 # Ignore other common files
 *.log
 *.sqlite3 
+
+app/utils/vertex_genai_client_test.py

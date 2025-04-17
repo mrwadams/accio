@@ -294,12 +294,12 @@ def process_citations(response: str, contexts: List[RetrievedContext]) -> str:
     """
     import re
     
-    # Find all source citations in the format [Source #] or [Source #, #]
-    citation_pattern = r'\[Source (\d+(?:,\s*\d+)*)\]'
+    # Find all source citations in the format [Source #] or [Source #, #] or (Source #, #)
+    citation_pattern = r'(\[|\()Source (\d+(?:,\s*\d+)*)[\]|\)]'
     
     def replace_citation(match):
         # Get the source numbers from the citation
-        source_nums = [int(num.strip()) for num in match.group(1).split(',')]
+        source_nums = [int(num.strip()) for num in match.group(2).split(',')]
         
         # Build tooltip content for each source
         tooltips = []
@@ -326,7 +326,7 @@ def process_citations(response: str, contexts: List[RetrievedContext]) -> str:
         tooltip_content = " || ".join(tooltips)
         
         # Create a simple span with escaped tooltip
-        citation_text = f"[Source {match.group(1)}]"
+        citation_text = match.group(0)
         return f'<span title="{tooltip_content}">{citation_text}</span>'
     
     # Replace all citations with tooltips
@@ -757,6 +757,11 @@ def main():
                     
                     # Final update without cursor
                     processed_response = process_citations(full_response, contexts)
+
+                    # --- DEBUG: Print raw LLM response to CLI before citation processing ---
+                    print("\n[DEBUG] Raw LLM response before citation processing:\n" + full_response + "\n")
+                    # --- END DEBUG ---
+                    
                     message_placeholder.markdown(processed_response, unsafe_allow_html=True)
                     
                     # Add assistant response to chat history with unique ID

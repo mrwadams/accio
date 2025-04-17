@@ -4,6 +4,7 @@ from pathlib import Path
 import streamlit as st
 from dotenv import load_dotenv
 from google import genai
+import logging
 
 # Add the project root to the Python path
 project_root = str(Path(__file__).parent)
@@ -11,8 +12,13 @@ if project_root not in sys.path:
     sys.path.append(project_root)
 
 from app.utils.database import initialize_database, verify_team_access
-from app.utils.embeddings import EmbeddingService
-from app.utils.llm_service import LLMService
+
+# Import the configured LLM service instance
+from app.utils.genai_client import configured_llm_service, configured_client
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -62,15 +68,20 @@ def authenticate():
 # Initialize services if authenticated
 if st.session_state.authenticated and 'initialized' not in st.session_state:
     try:
-        # Initialize Google GenAI client
-        client = genai.Client(api_key=os.getenv('GOOGLE_API_KEY'))
+        # Services are now initialized in genai_client.py
+        # Just assign the pre-configured instances to session state
+        st.session_state.llm_service = configured_llm_service
         
-        # Initialize services
-        st.session_state.llm_service = LLMService(client)
-        st.session_state.embedding_service = EmbeddingService(client)
-        
+        # Assuming EmbeddingService also needs the correct client
+        # If EmbeddingService exists and uses the client, update it similarly
+        # st.session_state.embedding_service = EmbeddingService(configured_client) 
+        # If EmbeddingService doesn't exist or doesn't need the client, remove/comment out
+
         st.session_state.initialized = True
+        logger.info("Services assigned to session state.")
     except Exception as e:
+        # Log the full traceback for debugging
+        logger.exception(f"Error assigning services to session state: {str(e)}") 
         st.error(f"Failed to initialize services: {str(e)}")
         st.stop()
 

@@ -18,3 +18,4 @@ libmagic
 docx2txt
 tiktoken
 markdown
+vertexai
