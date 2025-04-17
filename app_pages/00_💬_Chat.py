@@ -15,6 +15,7 @@ from app.utils.hybrid_search import HybridSearcher
 from app.utils.feedback import FeedbackService
 from app.utils.database import verify_team_access
 from app.components.agent import Agent
+from app.utils.genai_client import configured_client, configured_llm_service
 
 # Load environment variables
 load_dotenv()
@@ -354,15 +355,15 @@ def main():
     if "message_counter" not in st.session_state:
         st.session_state.message_counter = 0
 
-    # Create Google GenAI client (shared)
+    # Use the unified GenAI client abstraction
     if "genai_client" not in st.session_state:
-        from google import genai
-        st.session_state.genai_client = genai.Client(api_key=os.getenv('GOOGLE_API_KEY'))
+        st.session_state.genai_client = configured_client
     client = st.session_state.genai_client
 
-    # Initialize base services in session state
     if "llm_service" not in st.session_state:
-        st.session_state.llm_service = LLMService(client)
+        st.session_state.llm_service = configured_llm_service
+
+    # Initialize base services in session state
     if "embedding_service" not in st.session_state:
         st.session_state.embedding_service = EmbeddingService(client)
 
