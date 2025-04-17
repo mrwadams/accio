@@ -10,8 +10,9 @@ from app.utils.ingestion import IngestionPipeline
 import pandas as pd
 import sys
 import nltk
-from app.utils.vertex_genai_client_test import VertexGenAIClient
+from app.utils.vertex_genai_client import VertexGenAIClient
 from app.utils.vertex_embedding_service import VertexEmbeddingService
+from sqlalchemy import create_engine
 
 # Load environment variables
 load_dotenv()
@@ -48,17 +49,21 @@ def initialize_services():
         else:
             st.session_state.genai_client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
             st.session_state.embedding_service = EmbeddingService(st.session_state.genai_client)
-    
-    # Initialize vector store
-    vector_store = VectorStore({
-        "dbname": os.getenv("DB_NAME"),
-        "user": os.getenv("DB_USER"),
-        "password": os.getenv("DB_PASSWORD"),
-        "host": os.getenv("DB_HOST"),
-        "port": os.getenv("DB_PORT")
-    })
-    
-    # Initialize ingestion pipeline
+
+    # --- SQLAlchemy engine setup ---
+    schema_name = "app_schema"
+    vector_schema = "extensions"
+    connection_string = f"postgresql+psycopg2://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
+    engine_args = {
+        "connect_args": {
+            "options": f"-csearch_path={schema_name},{vector_schema},public"
+        }
+    }
+    engine = create_engine(connection_string, poolclass=None, **engine_args)
+
+    # Now pass the engine to VectorStore
+    vector_store = VectorStore(engine)
+
     st.session_state.ingestion_pipeline = IngestionPipeline(
         embedding_service=st.session_state.embedding_service,
         vector_store=vector_store
