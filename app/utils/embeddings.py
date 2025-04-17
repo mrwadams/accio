@@ -12,6 +12,7 @@ import uuid
 
 import psycopg2
 from psycopg2.extras import execute_values
+from sqlalchemy.engine import Engine
 from google import genai
 from google.genai import types
 
@@ -130,17 +131,19 @@ class EmbeddingService:
 class VectorStore:
     """Handles storage and retrieval of document chunks and their embeddings in PostgreSQL."""
     
-    def __init__(self, db_params: Dict[str, str]):
+    def __init__(self, engine: Engine):
         """Initialize the vector store.
         
         Args:
-            db_params: Database connection parameters
+            engine: SQLAlchemy engine instance configured with the correct search path.
         """
-        self.db_params = db_params
+        self.engine = engine
 
     def _get_connection(self) -> psycopg2.extensions.connection:
-        """Get a database connection."""
-        return psycopg2.connect(**self.db_params)
+        """Get a raw DBAPI connection from the engine."""
+        # Use the engine's connect method which handles pooling
+        # .raw_connection() gets the underlying psycopg2 connection
+        return self.engine.raw_connection()
 
     def list_documents(self, team_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """List documents, optionally filtered by team_id.
@@ -151,82 +154,86 @@ class VectorStore:
         Returns:
             List of document dictionaries containing doc_id, filename, and metadata.
         """
-        conn = self._get_connection()
-        cur = conn.cursor()
-        
-        try:
-            if team_id is None:
-                # Admin view - get all documents
-                query = """
-                    SELECT doc_id, filename, metadata, team_id, created_at, updated_at
-                    FROM app_schema.documents
-                    ORDER BY created_at DESC
-                """
-                cur.execute(query)
-            else:
-                # Team view - get only team's documents
-                query = """
-                    SELECT doc_id, filename, metadata, team_id, created_at, updated_at
-                    FROM app_schema.documents
-                    WHERE team_id = %s
-                    ORDER BY created_at DESC
-                """
-                cur.execute(query, (team_id,))
+        with self.engine.connect() as connection:
+            conn = connection.connection # Get raw psycopg2 connection if needed by cursor
+            cur = conn.cursor()
             
-            results = cur.fetchall()
-            
-            return [{
-                'doc_id': r[0],
-                'filename': r[1],
-                'metadata': r[2],
-                'team_id': r[3],
-                'created_at': r[4],
-                'updated_at': r[5]
-            } for r in results]
-            
-        finally:
-            cur.close()
-            conn.close()
+            try:
+                if team_id is None:
+                    # Admin view - get all documents
+                    query = """
+                        SELECT doc_id, filename, metadata, team_id, created_at, updated_at
+                        FROM app_schema.documents
+                        ORDER BY created_at DESC
+                    """
+                    cur.execute(query)
+                else:
+                    # Team view - get only team's documents
+                    query = """
+                        SELECT doc_id, filename, metadata, team_id, created_at, updated_at
+                        FROM app_schema.documents
+                        WHERE team_id = %s
+                        ORDER BY created_at DESC
+                    """
+                    cur.execute(query, (team_id,))
+                
+                results = cur.fetchall()
+                
+                return [{
+                    'doc_id': r[0],
+                    'filename': r[1],
+                    'metadata': r[2],
+                    'team_id': r[3],
+                    'created_at': r[4],
+                    'updated_at': r[5]
+                } for r in results]
+                
+            finally:
+                cur.close()
+                # Connection is closed automatically by 'with' block
+                # conn.close() # No longer needed
 
     def store_chunks(self, chunks: List[EmbeddedChunk], team_id: str):
         """Store document chunks with their embeddings."""
         if not chunks:
             return
         
-        conn = self._get_connection()
-        cur = conn.cursor()
-        
-        try:
-            # First ensure the document exists and belongs to the team
-            doc_id = chunks[0].doc_id
-            cur.execute("""
-                SELECT team_id FROM app_schema.documents 
-                WHERE doc_id = %s AND team_id = %s
-            """, (doc_id, team_id))
+        # Need to manage connection context when using engine
+        with self.engine.connect() as connection:
+            conn = connection.connection # Get raw psycopg2 connection
+            cur = conn.cursor()
             
-            if not cur.fetchone():
-                raise ValueError(f"Document {doc_id} not found or not owned by team {team_id}")
-            
-            # Store chunks
-            chunk_data = [
-                (str(uuid.uuid4()), chunk.doc_id, chunk.text, chunk.embedding)
-                for chunk in chunks
-            ]
-            
-            execute_values(cur, """
-                INSERT INTO app_schema.chunks (chunk_id, doc_id, text, embedding)
-                VALUES %s
-            """, chunk_data)
-            
-            conn.commit()
-            
-        except Exception as e:
-            logger.error(f"Error storing chunks: {str(e)}")
-            conn.rollback()
-            raise
-        finally:
-            cur.close()
-            conn.close()
+            try:
+                # First ensure the document exists and belongs to the team
+                doc_id = chunks[0].doc_id
+                cur.execute("""
+                    SELECT team_id FROM app_schema.documents 
+                    WHERE doc_id = %s AND team_id = %s
+                """, (doc_id, team_id))
+                
+                if not cur.fetchone():
+                    raise ValueError(f"Document {doc_id} not found or not owned by team {team_id}")
+                
+                # Store chunks
+                chunk_data = [
+                    (str(uuid.uuid4()), chunk.doc_id, chunk.text, chunk.embedding)
+                    for chunk in chunks
+                ]
+                
+                execute_values(cur, """
+                    INSERT INTO app_schema.chunks (chunk_id, doc_id, text, embedding)
+                    VALUES %s
+                """, chunk_data)
+                
+                conn.commit()
+                
+            except Exception as e:
+                conn.rollback()
+                logger.error(f"Error storing chunks for team {team_id}: {e}", exc_info=True)
+                raise
+            finally:
+                cur.close()
+                # Connection closed automatically
 
     def similarity_search(
         self,
@@ -237,61 +244,64 @@ class VectorStore:
         admin_override: bool = False
     ) -> List[Dict[str, Any]]:
         """Search for similar chunks, filtered by team_id unless admin_override is True."""
-        conn = self._get_connection()
-        cur = conn.cursor()
-        
-        try:
-            if admin_override:
-                query = """
-                    SELECT 
-                        c.chunk_id,
-                        c.doc_id,
-                        d.filename,
-                        c.text,
-                        d.metadata,
-                        d.team_id,
-                        1 - (c.embedding <-> %s::vector) as similarity
-                    FROM app_schema.chunks c
-                    JOIN app_schema.documents d ON c.doc_id = d.doc_id
-                    WHERE 1 - (c.embedding <-> %s::vector) > %s
-                    ORDER BY c.embedding <-> %s::vector
-                    LIMIT %s
-                """
-                params = (query_embedding, query_embedding, score_threshold or 0.0, query_embedding, k)
-            else:
-                query = """
-                    SELECT 
-                        c.chunk_id,
-                        c.doc_id,
-                        d.filename,
-                        c.text,
-                        d.metadata,
-                        d.team_id,
-                        1 - (c.embedding <-> %s::vector) as similarity
-                    FROM app_schema.chunks c
-                    JOIN app_schema.documents d ON c.doc_id = d.doc_id
-                    WHERE d.team_id = %s AND 1 - (c.embedding <-> %s::vector) > %s
-                    ORDER BY c.embedding <-> %s::vector
-                    LIMIT %s
-                """
-                params = (query_embedding, team_id, query_embedding, score_threshold or 0.0, query_embedding, k)
+        with self.engine.connect() as connection:
+            conn = connection.connection # Get raw psycopg2 connection
+            cur = conn.cursor()
             
-            cur.execute(query, params)
-            results = cur.fetchall()
-            
-            return [{
-                'chunk_id': r[0],
-                'doc_id': r[1],
-                'filename': r[2],
-                'text': r[3],
-                'metadata': r[4],
-                'team_id': r[5],
-                'similarity': r[6]
-            } for r in results]
-            
-        finally:
-            cur.close()
-            conn.close()
+            try:
+                if admin_override:
+                    query = """
+                        SELECT 
+                            c.chunk_id,
+                            c.doc_id,
+                            d.filename,
+                            c.text,
+                            d.metadata,
+                            d.team_id,
+                            1 - (c.embedding <-> %s::vector) as similarity
+                        FROM app_schema.chunks c
+                        JOIN app_schema.documents d ON c.doc_id = d.doc_id
+                        WHERE 1 - (c.embedding <-> %s::vector) > %s
+                        ORDER BY c.embedding <-> %s::vector
+                        LIMIT %s
+                    """
+                    params = (query_embedding, query_embedding, score_threshold or 0.0, query_embedding, k)
+                else:
+                    query = """
+                        SELECT 
+                            c.chunk_id,
+                            c.doc_id,
+                            d.filename,
+                            c.text,
+                            d.metadata,
+                            d.team_id,
+                            1 - (c.embedding <-> %s::vector) as similarity
+                        FROM app_schema.chunks c
+                        JOIN app_schema.documents d ON c.doc_id = d.doc_id
+                        WHERE d.team_id = %s AND 1 - (c.embedding <-> %s::vector) > %s
+                        ORDER BY c.embedding <-> %s::vector
+                        LIMIT %s
+                    """
+                    params = (query_embedding, team_id, query_embedding, score_threshold or 0.0, query_embedding, k)
+                
+                cur.execute(query, params)
+                results = cur.fetchall()
+                
+                return [{
+                    'chunk_id': r[0],
+                    'doc_id': r[1],
+                    'filename': r[2],
+                    'text': r[3],
+                    'metadata': r[4],
+                    'team_id': r[5],
+                    'similarity': r[6]
+                } for r in results]
+                
+            finally:
+                cur.close()
+                # Connection closed automatically
+                
+        return results
 
     def hybrid_search(
         self,
@@ -304,8 +314,13 @@ class VectorStore:
         admin_override: bool = False
     ) -> List[SearchResult]:
         """Perform hybrid search combining vector similarity and keyword matching."""
-        searcher = HybridSearcher(self.db_params)
-        return searcher.search(
+        # We should ideally be using the HybridSearcher instance directly from the app
+        # instead of calling this method which recreates one.
+        # For now, let's assume we need to create it if called this way.
+        # TODO: Re-evaluate if this method is truly needed in VectorStore
+        # It requires passing the engine to HybridSearcher
+        hybrid_searcher = HybridSearcher(self.engine) 
+        return hybrid_searcher.search(
             query=query,
             query_embedding=query_embedding,
             team_id=team_id,

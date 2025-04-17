@@ -8,6 +8,7 @@ import logging
 from dataclasses import dataclass
 import psycopg2
 from psycopg2.extras import execute_values
+from sqlalchemy.engine import Engine
 
 logger = logging.getLogger(__name__)
 
@@ -27,38 +28,37 @@ class SearchResult:
 class HybridSearcher:
     """Implements hybrid search combining vector similarity and full-text search."""
     
-    def __init__(self, db_params: Dict[str, str]):
+    def __init__(self, engine: Engine):
         """Initialize the hybrid searcher.
         
         Args:
-            db_params: Database connection parameters
+            engine: SQLAlchemy engine instance configured with the correct search path.
         """
-        self.db_params = db_params
+        self.engine = engine
         self._init_fts()
     
-    def _get_connection(self):
-        """Get database connection."""
-        return psycopg2.connect(**self.db_params)
-    
     def _init_fts(self):
-        """Initialize full-text search configuration."""
-        with self._get_connection() as conn:
-            with conn.cursor() as cur:
-                # Add tsvector column if it doesn't exist
-                cur.execute("""
-                    ALTER TABLE app_schema.chunks 
-                    ADD COLUMN IF NOT EXISTS textsearch tsvector
-                    GENERATED ALWAYS AS (to_tsvector('english', text)) STORED
-                """)
-                
-                # Create GIN index for full-text search if it doesn't exist
-                cur.execute("""
-                    CREATE INDEX IF NOT EXISTS chunks_textsearch_idx 
-                    ON app_schema.chunks 
-                    USING gin(textsearch)
-                """)
-                
-                conn.commit()
+        """Initialize full-text search configuration using the engine."""
+        with self.engine.connect() as connection:
+            raw_conn = connection.connection
+            with raw_conn.cursor() as cur:
+                try:
+                    cur.execute("""
+                        ALTER TABLE app_schema.chunks 
+                        ADD COLUMN IF NOT EXISTS textsearch tsvector
+                        GENERATED ALWAYS AS (to_tsvector('english', text)) STORED
+                    """)
+                    
+                    cur.execute("""
+                        CREATE INDEX IF NOT EXISTS chunks_textsearch_idx 
+                        ON app_schema.chunks 
+                        USING gin(textsearch)
+                    """)
+                    raw_conn.commit()
+                except Exception as e:
+                    logger.error(f"Error during FTS initialization: {e}", exc_info=True)
+                    raw_conn.rollback()
+                    raise
 
     def _execute_vector_search(
         self,
@@ -80,9 +80,9 @@ class HybridSearcher:
         Returns:
             List of results with similarity scores
         """
-        with self._get_connection() as conn:
+        with self.engine.connect() as connection:
+            conn = connection.connection
             with conn.cursor() as cur:
-                # Base query with team join
                 query = """
                     SELECT 
                         c.chunk_id,
@@ -99,12 +99,10 @@ class HybridSearcher:
                 
                 params = [query_embedding]
                 
-                # Add team filter if not admin
                 if not admin_override:
                     query += " AND d.team_id = %s"
                     params.append(team_id)
                 
-                # Add similarity threshold if specified
                 if score_threshold is not None:
                     query += " AND 1 - (c.embedding <=> %s::vector) >= %s"
                     params.extend([query_embedding, score_threshold])
@@ -145,16 +143,14 @@ class HybridSearcher:
         Returns:
             List of results with text search scores
         """
-        with self._get_connection() as conn:
+        with self.engine.connect() as connection:
+            conn = connection.connection
             with conn.cursor() as cur:
-                # Use plainto_tsquery for more robust FTS
                 if not query.strip():
                     return []
                 
-                # Debug: print the query string and team_id
                 print(f"[HybridSearch] FTS search for query: '{query}' team_id: '{team_id}' k: {k} admin_override: {admin_override}")
                 
-                # Execute text search with ranking and team filtering
                 sql = """
                     WITH RankedResults AS (
                         SELECT 
@@ -188,7 +184,6 @@ class HybridSearcher:
                     LIMIT %s
                 """
                 params.append(k)
-                # Debug: print the SQL and parameters
                 print("[HybridSearch] FTS SQL:")
                 print(sql)
                 print("[HybridSearch] FTS params:")
@@ -232,7 +227,6 @@ class HybridSearcher:
             Combined and re-ranked results
         """
         c = rrf_constant
-        # Create dictionaries mapping chunk IDs to their ranks and scores
         vector_ranks = {
             r["chunk_id"]: (i + 1, r)
             for i, r in enumerate(vector_results)

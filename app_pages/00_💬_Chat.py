@@ -4,6 +4,8 @@ from typing import List, Literal, Dict, Any
 from dotenv import load_dotenv
 import pprint
 import ast
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 from app.utils.llm_service import RetrievedContext, LLMService
 from app.utils.multi_query import MultiQueryGenerator
@@ -364,26 +366,55 @@ def main():
     if "embedding_service" not in st.session_state:
         st.session_state.embedding_service = EmbeddingService(client)
 
-    # Build db_params from environment variables
-    db_params = {
-        'dbname': os.getenv('DB_NAME'),
-        'user': os.getenv('DB_USER'),
-        'password': os.getenv('DB_PASSWORD'),
-        'host': os.getenv('DB_HOST'),
-        'port': os.getenv('DB_PORT')
-    }
+    # Build db_params from environment variables and create SQLAlchemy engine
+    if "db_engine" not in st.session_state:
+        db_user = os.getenv('DB_USER')
+        db_password = os.getenv('DB_PASSWORD') # Allowed to be empty string
+        db_host = os.getenv('DB_HOST')
+        db_port = os.getenv('DB_PORT')
+        db_name = os.getenv('DB_NAME')
+        
+        # Check required variables: user, host, port, name must be non-empty
+        # Password must be present (can be empty string), so check it's not None
+        required_vars_present = all([db_user, db_host, db_port, db_name])
+        password_is_present = db_password is not None
+        
+        if not (required_vars_present and password_is_present):
+            missing = []
+            if not db_user: missing.append('DB_USER')
+            if db_password is None: missing.append('DB_PASSWORD') # Check for None explicitly
+            if not db_host: missing.append('DB_HOST')
+            if not db_port: missing.append('DB_PORT')
+            if not db_name: missing.append('DB_NAME')
+            st.error(f"Database configuration environment variables missing or empty: {', '.join(missing)}")
+            st.stop()
+            
+        db_url = f"postgresql+psycopg2://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+        
+        # Create the engine with the specified search path
+        st.session_state.db_engine = create_engine(
+            db_url,
+            connect_args={'options': '-c search_path=app_schema,extensions,public'}
+        )
+        # Optional: Create a session factory if services expect sessions
+        # st.session_state.SessionFactory = sessionmaker(bind=st.session_state.db_engine)
+
 
     # Initialize other core services if not already set
+    # TODO: Update these initializations to accept the engine or session factory
     if "vector_store" not in st.session_state:
-        st.session_state.vector_store = VectorStore(db_params)
+        # Example: Modify VectorStore to accept engine
+        st.session_state.vector_store = VectorStore(engine=st.session_state.db_engine) 
     if "hybrid_search" not in st.session_state:
-        st.session_state.hybrid_search = HybridSearcher(db_params)
+        # Example: Modify HybridSearcher to accept engine
+        st.session_state.hybrid_search = HybridSearcher(engine=st.session_state.db_engine) 
     if "multi_query_generator" not in st.session_state:
         st.session_state.multi_query_generator = MultiQueryGenerator(client)
     if "reranker" not in st.session_state:
         st.session_state.reranker = GeminiReranker(client)
     if "feedback_service" not in st.session_state:
-        st.session_state.feedback_service = FeedbackService(db_params)
+        # Example: Modify FeedbackService to accept engine
+        st.session_state.feedback_service = FeedbackService(engine=st.session_state.db_engine)
     if "agent" not in st.session_state:
         st.session_state.agent = Agent()
 

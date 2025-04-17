@@ -2,32 +2,32 @@ from typing import Dict, Any, Optional
 import psycopg2
 from psycopg2.extras import Json
 from datetime import datetime
+from sqlalchemy.engine import Engine
 
 class FeedbackService:
     """Service for handling chat feedback operations."""
     
-    def __init__(self, db_params: Dict[str, str], team_schema: Optional[str] = None):
+    def __init__(self, engine: Engine, team_schema: Optional[str] = None):
         """Initialize the feedback service.
         
         Args:
-            db_params: Database connection parameters
-            team_schema: Optional team schema to use
+            engine: SQLAlchemy engine instance configured with the correct search path.
+            team_schema: Optional team schema to use (consider if this is still needed or handled by engine search path)
         """
-        self.db_params = db_params
+        self.engine = engine
         self.team_schema = team_schema
         self._init_tables()
     
     def _init_tables(self):
-        """Initialize the feedback tables in the specified schema."""
+        """Initialize the feedback tables using the engine."""
         try:
-            with psycopg2.connect(**self.db_params) as conn:
+            with self.engine.connect() as connection:
+                conn = connection.connection
                 with conn.cursor() as cur:
-                    # Create schema if it doesn't exist
                     if self.team_schema:
                         cur.execute(f"CREATE SCHEMA IF NOT EXISTS {self.team_schema}")
                     
-                    # Create feedback table in the appropriate schema
-                    schema_prefix = f"{self.team_schema}." if self.team_schema else ""
+                    schema_prefix = "app_schema."
                     cur.execute(f"""
                         CREATE TABLE IF NOT EXISTS {schema_prefix}feedback (
                             id SERIAL PRIMARY KEY,
@@ -71,9 +71,10 @@ class FeedbackService:
             bool: True if storage was successful, False otherwise
         """
         try:
-            with psycopg2.connect(**self.db_params) as conn:
+            with self.engine.connect() as connection:
+                conn = connection.connection
                 with conn.cursor() as cur:
-                    schema_prefix = f"{self.team_schema}." if self.team_schema else ""
+                    schema_prefix = "app_schema."
                     cur.execute(f"""
                         INSERT INTO {schema_prefix}feedback (
                             message_id,
@@ -116,9 +117,10 @@ class FeedbackService:
             Dict containing feedback statistics
         """
         try:
-            with psycopg2.connect(**self.db_params) as conn:
+            with self.engine.connect() as connection:
+                conn = connection.connection
                 with conn.cursor() as cur:
-                    schema_prefix = f"{self.team_schema}." if self.team_schema else ""
+                    schema_prefix = "app_schema."
                     query = f"""
                         SELECT 
                             feedback_type,
@@ -179,9 +181,10 @@ class FeedbackService:
             List of issue reports
         """
         try:
-            with psycopg2.connect(**self.db_params) as conn:
+            with self.engine.connect() as connection:
+                conn = connection.connection
                 with conn.cursor() as cur:
-                    schema_prefix = f"{self.team_schema}." if self.team_schema else ""
+                    schema_prefix = "app_schema."
                     query = f"""
                         SELECT 
                             id,
