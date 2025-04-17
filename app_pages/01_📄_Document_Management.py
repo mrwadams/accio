@@ -13,6 +13,7 @@ import nltk
 from app.utils.vertex_genai_client import VertexGenAIClient
 from app.utils.vertex_embedding_service import VertexEmbeddingService
 from sqlalchemy import create_engine
+from app.utils.langchain_vertex_embeddings import LangChainVertexEmbeddings
 
 # Load environment variables
 load_dotenv()
@@ -44,11 +45,14 @@ def initialize_services():
     genai_client_type = os.getenv("GENAI_CLIENT_TYPE", "google").lower()
     if 'genai_client' not in st.session_state:
         if genai_client_type == "vertex":
-            st.session_state.genai_client = VertexGenAIClient()
-            st.session_state.embedding_service = VertexEmbeddingService(st.session_state.genai_client)
+            vertex_service = VertexGenAIClient()
+            st.session_state.genai_client = vertex_service
+            st.session_state.embedding_service = VertexEmbeddingService(vertex_service)
+            st.session_state.langchain_embeddings = LangChainVertexEmbeddings(st.session_state.embedding_service)
         else:
             st.session_state.genai_client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
             st.session_state.embedding_service = EmbeddingService(st.session_state.genai_client)
+            st.session_state.langchain_embeddings = st.session_state.embedding_service
 
     # --- SQLAlchemy engine setup ---
     schema_name = "app_schema"
